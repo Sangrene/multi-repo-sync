@@ -37,7 +37,7 @@ const getConfig = async (): Promise<{ config: Config }> => {
   const file =
     getFlags().config ||
     path.fromFileUrl(
-      import.meta.url.replace("staging-to-prod.ts", "config.json")
+      import.meta.url.replace("multi-repo-sync.ts", "config.json")
     );
 
   return { config: JSON.parse(await Deno.readTextFile(file)) as Config };
@@ -103,7 +103,7 @@ const createPullRequests = async ({
             setTimeout(resolve, wait * 1000);
           });
         }
-        const { errors, base, head } = await guardRepoBranches(r, octokit);
+        const { errors } = await guardRepoBranches(r, octokit);
         if (errors)
           return {
             repo,
@@ -204,6 +204,13 @@ const createReleases = async ({
     releases: releaseName
       ? Promise.all(
           merges.map(async (merge) => {
+            if (merge.errors) {
+              return {
+                owner: merge.owner,
+                repo: merge.repo,
+                errors: merge.errors,
+              };
+            }
             const result = await octokit.rest.repos.createRelease({
               owner: merge.owner,
               repo: merge.repo,
