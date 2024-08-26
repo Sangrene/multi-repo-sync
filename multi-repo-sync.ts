@@ -155,36 +155,38 @@ const mergePullRequests = async ({
   config,
   octokit,
 }: Awaited<ReturnType<typeof createPullRequests>>) => {
+  const merges = await Promise.all(
+    pullRequests.map(async (pr) => {
+      if (pr.errors) {
+        return {
+          errors: pr.errors,
+          repo: pr.repo,
+          owner: pr.owner,
+        };
+      }
+      try {
+        const result = await octokit.rest.pulls.merge({
+          owner: pr.owner,
+          repo: pr.repo,
+          pull_number: pr.result.data.number,
+        });
+        console.log(`Merged PR ${pr.result.data.number} on repo ${pr.repo}`);
+        return {
+          result,
+          owner: pr.owner,
+          repo: pr.repo,
+        };
+      } catch (e) {
+        return { errors: [e], owner: pr.owner, repo: pr.repo, config };
+      }
+    })
+  );
+
   return {
     config,
     octokit,
     pullRequests,
-    merges: await Promise.all(
-      pullRequests.map(async (pr) => {
-        if (pr.errors) {
-          return {
-            errors: pr.errors,
-            repo: pr.repo,
-            owner: pr.owner,
-          };
-        }
-        try {
-          const result = await octokit.rest.pulls.merge({
-            owner: pr.owner,
-            repo: pr.repo,
-            pull_number: pr.result.data.number,
-          });
-          console.log(`Merged PR ${pr.result.data.number} on repo ${pr.repo}`);
-          return {
-            result,
-            owner: pr.owner,
-            repo: pr.repo,
-          };
-        } catch (e) {
-          return { errors: [e], owner: pr.owner, repo: pr.repo, config };
-        }
-      })
-    ),
+    merges,
   };
 };
 
@@ -202,7 +204,7 @@ const createReleases = async ({
     pullRequests,
     merges,
     releases: releaseName
-      ? Promise.all(
+      ? await Promise.all(
           merges.map(async (merge) => {
             if (merge.errors) {
               return {
@@ -233,15 +235,44 @@ const createReleases = async ({
 const results = await getConfig()
   .then(login)
   .then(createPullRequests)
+  .then((res) => {
+    console.table(
+      res.pullRequests.map((pr) => ({
+        repo: pr.repo,
+        owner: pr.owner,
+        status: pr.errors ? "❌" : "✅", 
+        result: pr.result
+          ? `${pr.result?.data.title} ${pr.result.data.html_url}`
+          : "No result",
+        errors: pr.errors?.map((e) => e.message),
+      }))
+    );
+    return res;
+  })
   .then(mergePullRequests)
-  .then(createReleases);
-console.table(
-  results.merges.map((res) => ({
-    repo: res.repo,
-    owner: res.owner,
-    result: res.result
-      ? `${res.result?.data.message} ${res.result?.data.sha}`
-      : "No result",
-    errors: res.errors?.map((e) => e.message),
-  }))
-);
+  .then((res) => {
+    console.table(
+      res.merges.map((pr) => ({
+        repo: pr.repo,
+        owner: pr.owner,
+        status: pr.errors ? "❌" : "✅", 
+        result: pr.result
+          ? `${pr.result?.data.message} ${pr.result?.data.sha}`
+          : "No result",
+        errors: pr.errors?.map((e) => e.message),
+      }))
+    );
+    return res;
+  })
+  .then(createReleases)
+  .then((res) => {
+    console.table(
+      res.releases?.map((rel) => ({
+        repo: rel.repo,
+        owner: rel.owner,
+        status: rel.errors ? "❌" : "✅", 
+        result: rel.result?.data.html_url,
+        errors: rel.errors?.map((e) => e.message),
+      }))
+    );
+  });
