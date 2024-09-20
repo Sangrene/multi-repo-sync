@@ -52,20 +52,45 @@ const login = async ({ config }: { config: Config }) => {
 
 type Github = Awaited<ReturnType<typeof login>>["octokit"];
 type User = Awaited<ReturnType<typeof login>>["user"];
-type Branch = Awaited<ReturnType<typeof guardRepoBranches>>["base"];
+type Branch = Awaited<
+  ReturnType<Github["rest"]["repos"]["listBranches"]>
+>["data"][number];
+
+const BRANCHES_PER_PAGE = 100;
 
 const guardRepoBranches = async (
   { owner, repo, origin, target }: Repo,
   github: Github
 ) => {
   const errors = [];
-  const branches = (
-    await github.rest.repos.listBranches({ repo, owner, per_page: 100 })
-  ).data;
-  if (branches.length > 99)
-    errors.push(new Error(`Repo ${repo} has too much remote branches`));
-  const base = branches.find((branch) => branch.name === origin);
-  const head = branches.find((branch) => branch.name === target);
+  let base: Branch | undefined = undefined;
+  let head: Branch | undefined = undefined;
+  let page = 0;
+  while (!head && !base && errors.length === 0) {
+    const branches = (
+      await github.rest.repos.listBranches({ repo, owner, per_page: BRANCHES_PER_PAGE, page })
+    ).data;
+    if (!base) {
+      base = branches.find((branch) => branch.name === origin);
+    }
+
+    if (!head) {
+      head = branches.find((branch) => branch.name === target);
+    }
+
+    if (head && base) {
+      break;
+    }
+
+    if (branches.length === BRANCHES_PER_PAGE) {
+      page++;
+    }
+
+    if (branches.length < BRANCHES_PER_PAGE) {
+      break;
+    }
+  }
+
   if (!base) {
     errors.push(
       new Error(
@@ -240,7 +265,7 @@ const results = await getConfig()
       res.pullRequests.map((pr) => ({
         repo: pr.repo,
         owner: pr.owner,
-        status: pr.errors ? "❌" : "✅", 
+        status: pr.errors ? "❌" : "✅",
         result: pr.result
           ? `${pr.result?.data.title} ${pr.result.data.html_url}`
           : "No result",
@@ -255,7 +280,7 @@ const results = await getConfig()
       res.merges.map((pr) => ({
         repo: pr.repo,
         owner: pr.owner,
-        status: pr.errors ? "❌" : "✅", 
+        status: pr.errors ? "❌" : "✅",
         result: pr.result
           ? `${pr.result?.data.message} ${pr.result?.data.sha}`
           : "No result",
@@ -270,7 +295,7 @@ const results = await getConfig()
       res.releases?.map((rel) => ({
         repo: rel.repo,
         owner: rel.owner,
-        status: rel.errors ? "❌" : "✅", 
+        status: rel.errors ? "❌" : "✅",
         result: rel.result?.data.html_url,
         errors: rel.errors?.map((e) => e.message),
       }))
