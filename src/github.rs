@@ -1,29 +1,17 @@
 pub mod github {
 
+    use std::{ops::Deref, sync::Arc};
+
     use regex::Regex;
 
+    use crate::parsing::parsing::JSONRepo;
+
     use super::super::parsing::parsing::Config;
-    use octocrab::{Error, Octocrab};
+    use octocrab::{repos::RepoHandler, Error, Octocrab};
 
     enum RepoType {
         Python,
         Node,
-    }
-
-
-    trait GithubClient<T> {
-        fn init(&self, c: Config) -> Result<T, Error>;
-    }
-
-    struct OctocrabClient {
-
-    }
-
-    impl GithubClient<Octocrab> for OctocrabClient{
-        fn init(&self, config: Config) -> Result<Octocrab, Error> {
-            let octocrab = Octocrab::builder().personal_token(config.pat).build()?;
-            return Ok(octocrab);
-        }
     }
 
     struct RepoAnalysis<'a> {
@@ -77,7 +65,7 @@ pub mod github {
     }
 
     pub async fn get_root_file_list(
-        octocrab: &Octocrab,
+        octocrab: &Arc<&Octocrab>,
         owner: &String,
         repo: &String,
     ) -> Result<Vec<octocrab::models::repos::Content>, Error> {
@@ -86,7 +74,7 @@ pub mod github {
     }
 
     async fn create_pr(
-        octocrab: &Octocrab,
+        octocrab: &Arc<&Octocrab>,
         owner: &String,
         repo: &String,
         title: &String,
@@ -105,7 +93,7 @@ pub mod github {
     }
 
     pub async fn update_file_version(
-        octocrab: &Octocrab,
+        octocrab: &Arc<&Octocrab>,
         owner: &String,
         repo: &String,
         path: &str,
@@ -124,17 +112,17 @@ pub mod github {
     }
 
     pub async fn merge_branch(
-        octocrab: &Octocrab,
+        octocrab: &Arc<&Octocrab>,
         owner: &String,
         repo: &String,
         pr_number: u64,
-    ) -> Result<(String), Error> {
+    ) -> Result<String, Error> {
         let res = octocrab.pulls(owner, repo).merge(pr_number).send().await?;
         return Ok(res.sha.unwrap());
     }
 
     pub async fn create_release(
-        octocrab: &Octocrab,
+        octocrab: &Arc<&Octocrab>,
         owner: &String,
         repo: &String,
         version: &String,
@@ -158,7 +146,7 @@ pub mod github {
     }
 
     pub async fn create_version_branch(
-        octocrab: &Octocrab,
+        octocrab: Arc<&Octocrab>,
         owner: &String,
         repo: &String,
         version: &String,
@@ -174,52 +162,75 @@ pub mod github {
         return Ok(());
     }
 
-    pub async fn get_all_repos<'a>(
-        octocrab: &Octocrab,
-        config: &'a Config,
+    async fn set_up_repo(
+        json_repo: &JSONRepo,
+        octocrab: Arc<&Octocrab>,
+        config: Arc<&Config>,
         version: String,
     ) -> Result<(), Error> {
+        let files = get_root_file_list(&octocrab, &json_repo.owner, &json_repo.repo).await?;
+        let file_to_update = get_repo_with_file_to_update(&files, &version).unwrap();
+        let pr_resullt = create_pr(
+            &octocrab,
+            &json_repo.owner,
+            &json_repo.repo,
+            &config.pattern.title,
+            &json_repo.origin,
+            &json_repo.target,
+            &config.pattern.body,
+        )
+        .await?;
+        update_file_version(
+            &octocrab,
+            &json_repo.owner,
+            &json_repo.repo,
+            &file_to_update.0.file_to_detect,
+            &file_to_update.1,
+            &file_to_update.2,
+            &json_repo.origin,
+        )
+        .await?;
+        let merge_result =
+            merge_branch(&octocrab, &json_repo.owner, &json_repo.repo, pr_resullt.0).await?;
+        create_release(
+            &octocrab,
+            &json_repo.owner,
+            &json_repo.repo,
+            &version,
+            &merge_result,
+        )
+        .await?;
+        create_version_branch(
+            octocrab,
+            &json_repo.owner,
+            &json_repo.repo,
+            &version,
+            &pr_resullt.1,
+        )
+        .await?;
+        return Ok(());
+    }
+
+    pub async fn get_all_repos<'a>(
+        octocrab: &'static Octocrab,
+        config: &'static Config,
+        version: String,
+    ) -> Result<(), Error> {
+        let octocrab_arc = Arc::new(octocrab);
+        let config_arc = Arc::new(config);
+        let version_arc = Arc::new(&version);
+        let mut handles = vec![];
         for json_repo in &config.repositories {
-            let files = get_root_file_list(octocrab, &json_repo.owner, &json_repo.repo).await?;
-            let file_to_update = get_repo_with_file_to_update(&files, &version).unwrap();
-            let pr_resullt = create_pr(
-                octocrab,
-                &json_repo.owner,
-                &json_repo.repo,
-                &config.pattern.title,
-                &json_repo.origin,
-                &json_repo.target,
-                &config.pattern.body,
-            )
-            .await?;
-            update_file_version(
-                octocrab,
-                &json_repo.owner,
-                &json_repo.repo,
-                &file_to_update.0.file_to_detect,
-                &file_to_update.1,
-                &file_to_update.2,
-                &json_repo.origin,
-            )
-            .await?;
-            let merge_result =
-                merge_branch(octocrab, &json_repo.owner, &json_repo.repo, pr_resullt.0).await?;
-            create_release(
-                octocrab,
-                &json_repo.owner,
-                &json_repo.repo,
-                &version,
-                &merge_result,
-            )
-            .await?;
-            create_version_branch(
-                octocrab,
-                &json_repo.owner,
-                &json_repo.repo,
-                &version,
-                &pr_resullt.1,
-            )
-            .await?;
+            let octocrab_clone = Arc::clone(&octocrab_arc);
+            let config_clone = Arc::clone(&config_arc);
+            let version_clone = Arc::clone(&version_arc);
+            let future = set_up_repo(
+                json_repo,
+                octocrab_clone,
+                config_clone,
+                version_clone.to_string(),
+            );
+            handles.push(tokio::spawn(future));
         }
         return Ok(());
     }

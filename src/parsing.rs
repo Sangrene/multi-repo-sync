@@ -11,6 +11,9 @@ pub mod parsing {
         /// JSON config file path
         #[arg(short, long, default_value_t=String::from("config.json"))]
         config: String,
+        // Tag
+        #[arg(short, long)]
+        tag: String
     }
 
     #[derive(Serialize, Deserialize)]
@@ -36,6 +39,7 @@ pub mod parsing {
 
     pub struct ParsedArgs {
         pub config: Config,
+        pub tag: String,
     }
 
     pub fn parse_args() -> Result<ParsedArgs, Error> {
@@ -46,6 +50,7 @@ pub mod parsing {
         let parsed_config: Config = serde_json::from_reader(file).unwrap();
         Ok(ParsedArgs {
             config: parsed_config,
+            tag: args.tag
         })
     }
 }
