@@ -22,7 +22,7 @@ pub mod parsing {
         pub body: String,
     }
 
-    #[derive(Serialize, Deserialize)]
+    #[derive(Serialize, Deserialize, Clone)]
     pub struct JSONRepo {
         pub owner: String,
         pub repo: String,

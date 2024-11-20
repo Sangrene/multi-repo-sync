@@ -1,8 +1,12 @@
 pub mod github {
 
-    use std::{ops::Deref, sync::Arc};
+    use std::sync::Arc;
 
     use regex::Regex;
+    use tokio::{
+        sync::{RwLock, RwLockReadGuard},
+        task::JoinSet,
+    };
 
     use crate::parsing::parsing::JSONRepo;
 
@@ -65,16 +69,22 @@ pub mod github {
     }
 
     pub async fn get_root_file_list(
-        octocrab: &Arc<&Octocrab>,
+        octocrab: &Arc<RwLock<Octocrab>>,
         owner: &String,
         repo: &String,
     ) -> Result<Vec<octocrab::models::repos::Content>, Error> {
-        let content = octocrab.repos(owner, repo).get_content().send().await?;
+        let content = octocrab
+            .read()
+            .await
+            .repos(owner, repo)
+            .get_content()
+            .send()
+            .await?;
         return Ok(content.items);
     }
 
     async fn create_pr(
-        octocrab: &Arc<&Octocrab>,
+        octocrab: &Arc<RwLock<Octocrab>>,
         owner: &String,
         repo: &String,
         title: &String,
@@ -83,6 +93,8 @@ pub mod github {
         body: &String,
     ) -> Result<(u64, String), Error> {
         let pr_result = octocrab
+            .read()
+            .await
             .pulls(owner, repo)
             .create(title, origin, target)
             .body(body)
@@ -93,7 +105,7 @@ pub mod github {
     }
 
     pub async fn update_file_version(
-        octocrab: &Arc<&Octocrab>,
+        octocrab: &Arc<RwLock<Octocrab>>,
         owner: &String,
         repo: &String,
         path: &str,
@@ -102,6 +114,8 @@ pub mod github {
         branch: &String,
     ) -> Result<(), Error> {
         octocrab
+            .read()
+            .await
             .repos(owner, repo)
             .update_file(path, "Bumping version", content, sha)
             .branch(branch)
@@ -112,23 +126,31 @@ pub mod github {
     }
 
     pub async fn merge_branch(
-        octocrab: &Arc<&Octocrab>,
+        octocrab: &Arc<RwLock<Octocrab>>,
         owner: &String,
         repo: &String,
         pr_number: u64,
     ) -> Result<String, Error> {
-        let res = octocrab.pulls(owner, repo).merge(pr_number).send().await?;
+        let res = octocrab
+            .read()
+            .await
+            .pulls(owner, repo)
+            .merge(pr_number)
+            .send()
+            .await?;
         return Ok(res.sha.unwrap());
     }
 
     pub async fn create_release(
-        octocrab: &Arc<&Octocrab>,
+        octocrab: &Arc<RwLock<Octocrab>>,
         owner: &String,
         repo: &String,
         version: &String,
         merge_sha: &String,
     ) -> Result<(), Error> {
         octocrab
+            .read()
+            .await
             .repos(owner, repo)
             .releases()
             .create(version)
@@ -137,6 +159,8 @@ pub mod github {
             .send()
             .await?;
         octocrab
+            .read()
+            .await
             .repos(owner, repo)
             .releases()
             .generate_release_notes(&version)
@@ -146,13 +170,15 @@ pub mod github {
     }
 
     pub async fn create_version_branch(
-        octocrab: Arc<&Octocrab>,
+        octocrab: &Arc<RwLock<Octocrab>>,
         owner: &String,
         repo: &String,
         version: &String,
         sha: &String,
     ) -> Result<(), Error> {
         octocrab
+            .read()
+            .await
             .repos(owner, repo)
             .create_ref(
                 &octocrab::params::repos::Reference::Branch(version.clone()),
@@ -164,20 +190,21 @@ pub mod github {
 
     async fn set_up_repo(
         json_repo: &JSONRepo,
-        octocrab: Arc<&Octocrab>,
-        config: Arc<&Config>,
-        version: String,
+        octocrab: Arc<RwLock<Octocrab>>,
+        config: Arc<RwLock<Config>>,
+        version: Arc<RwLock<String>>,
     ) -> Result<(), Error> {
         let files = get_root_file_list(&octocrab, &json_repo.owner, &json_repo.repo).await?;
-        let file_to_update = get_repo_with_file_to_update(&files, &version).unwrap();
+        let version_s = version.read().await.to_string();
+        let file_to_update = get_repo_with_file_to_update(&files, &version_s).unwrap();
         let pr_resullt = create_pr(
             &octocrab,
             &json_repo.owner,
             &json_repo.repo,
-            &config.pattern.title,
+            &config.read().await.pattern.title,
             &json_repo.origin,
             &json_repo.target,
-            &config.pattern.body,
+            &config.read().await.pattern.body,
         )
         .await?;
         update_file_version(
@@ -196,42 +223,47 @@ pub mod github {
             &octocrab,
             &json_repo.owner,
             &json_repo.repo,
-            &version,
+            &version.read().await.to_string(),
             &merge_result,
         )
         .await?;
         create_version_branch(
-            octocrab,
+            &octocrab,
             &json_repo.owner,
             &json_repo.repo,
-            &version,
+            &version.read().await.to_string(),
             &pr_resullt.1,
         )
         .await?;
         return Ok(());
     }
 
-    pub async fn get_all_repos<'a>(
-        octocrab: &'static Octocrab,
-        config: &'static Config,
+    pub async fn set_all_repos(
+        octocrab: Octocrab,
+        config: Config,
         version: String,
     ) -> Result<(), Error> {
-        let octocrab_arc = Arc::new(octocrab);
-        let config_arc = Arc::new(config);
-        let version_arc = Arc::new(&version);
-        let mut handles = vec![];
-        for json_repo in &config.repositories {
+        let mut set = JoinSet::new();
+        let octocrab_arc = Arc::new(RwLock::new(octocrab));
+        let config_arc = Arc::new(RwLock::new(config));
+        let version_arc = Arc::new(RwLock::new(version));
+        
+        let repos = config_arc.read().await.repositories.clone();
+        for json_repo in repos {
             let octocrab_clone = Arc::clone(&octocrab_arc);
             let config_clone = Arc::clone(&config_arc);
             let version_clone = Arc::clone(&version_arc);
-            let future = set_up_repo(
-                json_repo,
-                octocrab_clone,
-                config_clone,
-                version_clone.to_string(),
-            );
-            handles.push(tokio::spawn(future));
+            set.spawn(async move {
+                let t = JSONRepo {
+                    origin: "".to_string(),
+                    owner: "".to_string(),
+                    repo: "".to_string(),
+                    target: "".to_string(),
+                };
+                set_up_repo(&json_repo, octocrab_clone, config_clone, version_clone).await;
+            });
         }
+        set.join_all().await;
         return Ok(());
     }
 }
