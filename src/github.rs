@@ -13,6 +13,7 @@ pub mod github {
     enum RepoType {
         Python,
         Node,
+        Rust,
     }
 
     struct RepoAnalysis<'a> {
@@ -21,7 +22,7 @@ pub mod github {
         file_content_update_fn: fn(content: String, version: &String) -> String,
     }
 
-    const FILE_TO_LANGUAGE: [RepoAnalysis; 2] = [
+    const FILE_TO_LANGUAGE: [RepoAnalysis; 3] = [
         RepoAnalysis {
             file_to_detect: "package.json",
             language: RepoType::Node,
@@ -42,6 +43,23 @@ pub mod github {
         RepoAnalysis {
             file_to_detect: "pyproject.toml",
             language: RepoType::Python,
+            file_content_update_fn: |content, version| {
+                let re = Regex::new(r"version\s=.+\n").unwrap();
+                return re
+                    .replace(
+                        &content,
+                        format!(
+                            r#"version = "{}"
+"#,
+                            version
+                        ),
+                    )
+                    .to_string();
+            },
+        },
+        RepoAnalysis {
+            file_to_detect: "Cargo.toml",
+            language: RepoType::Rust,
             file_content_update_fn: |content, version| {
                 let re = Regex::new(r"version\s=.+\n").unwrap();
                 return re
