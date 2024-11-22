@@ -27,4 +27,4 @@ The `pattern` describes the PR title and body.
 Run the script.
 
 ie
-```deno run multi-repo-sync --config=config.json --release=v1.23.2```
+```deno run multi-repo-sync.ts --config=config.json --release=v1.23.2```
