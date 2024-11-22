@@ -1,4 +1,4 @@
 *.json
 !package.json
 !deno.json
-target
+/target
