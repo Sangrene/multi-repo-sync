@@ -196,7 +196,12 @@ pub mod github {
     ) -> Result<(), Error> {
         let files = get_root_file_list(&octocrab, &json_repo.owner, &json_repo.repo).await?;
         let version_s = version.read().await.to_string();
-        let file_to_update = get_repo_with_file_to_update(&files, &version_s).unwrap();
+        let file_to_update = match get_repo_with_file_to_update(&files, &version_s) {
+            Some(analysis) => analysis,
+            None => {
+                panic!("No versionning file found");
+            }
+        };
         let pr_resullt = create_pr(
             &octocrab,
             &json_repo.owner,
@@ -235,6 +240,12 @@ pub mod github {
             &pr_resullt.1,
         )
         .await?;
+        println!(
+            "Repo {} setup with new version {}",
+            json_repo.repo,
+            version.read().await
+        );
+
         return Ok(());
     }
 
@@ -243,24 +254,29 @@ pub mod github {
         config: Config,
         version: String,
     ) -> Result<(), Error> {
+        println!(
+            "Authenticated as {}",
+            octocrab.current().user().await.unwrap().url
+        );
         let mut set = JoinSet::new();
         let octocrab_arc = Arc::new(RwLock::new(octocrab));
         let config_arc = Arc::new(RwLock::new(config));
         let version_arc = Arc::new(RwLock::new(version));
-        
+
         let repos = config_arc.read().await.repositories.clone();
         for json_repo in repos {
             let octocrab_clone = Arc::clone(&octocrab_arc);
             let config_clone = Arc::clone(&config_arc);
             let version_clone = Arc::clone(&version_arc);
             set.spawn(async move {
-                let t = JSONRepo {
-                    origin: "".to_string(),
-                    owner: "".to_string(),
-                    repo: "".to_string(),
-                    target: "".to_string(),
+                match set_up_repo(&json_repo, octocrab_clone, config_clone, version_clone).await {
+                    Ok(_) => {
+                        println!("Successfuly setup {}", json_repo.repo);
+                    }
+                    Err(error) => {
+                        println!("Error {error:?}");
+                    }
                 };
-                set_up_repo(&json_repo, octocrab_clone, config_clone, version_clone).await;
             });
         }
         set.join_all().await;
