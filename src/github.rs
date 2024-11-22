@@ -3,15 +3,12 @@ pub mod github {
     use std::sync::Arc;
 
     use regex::Regex;
-    use tokio::{
-        sync::{RwLock, RwLockReadGuard},
-        task::JoinSet,
-    };
+    use tokio::{sync::RwLock, task::JoinSet};
 
     use crate::parsing::parsing::JSONRepo;
 
     use super::super::parsing::parsing::Config;
-    use octocrab::{repos::RepoHandler, Error, Octocrab};
+    use octocrab::{Error, Octocrab};
 
     enum RepoType {
         Python,
@@ -31,7 +28,14 @@ pub mod github {
             file_content_update_fn: |content, version| {
                 let re = Regex::new(r#""version":.+\n"#).unwrap();
                 return re
-                    .replace(&content, format!(r#""version": "{}"\n"#, version))
+                    .replace(
+                        &content,
+                        format!(
+                            r#""version": "{}",
+"#,
+                            version
+                        ),
+                    )
                     .to_string();
             },
         },
@@ -41,21 +45,49 @@ pub mod github {
             file_content_update_fn: |content, version| {
                 let re = Regex::new(r"version\s=.+\n").unwrap();
                 return re
-                    .replace(&content, format!(r#"version = "{}"\n"#, version))
+                    .replace(
+                        &content,
+                        format!(
+                            r#"version = "{}"
+"#,
+                            version
+                        ),
+                    )
                     .to_string();
             },
         },
     ];
 
-    fn get_repo_with_file_to_update<'a>(
+    async fn get_repo_with_file_to_update<'a>(
+        octocrab: &Arc<RwLock<Octocrab>>,
+        owner: &String,
+        repo: &String,
         files: &Vec<octocrab::models::repos::Content>,
         version: &'a String,
     ) -> Option<(RepoAnalysis<'a>, String, String)> {
         for item in files {
             for analysis in FILE_TO_LANGUAGE {
                 if item.name.eq(analysis.file_to_detect) {
-                    let new_content =
-                        (analysis.file_content_update_fn)(item.decoded_content().unwrap(), version);
+                    let decoded_content = match octocrab
+                        .read()
+                        .await
+                        .repos(owner, repo)
+                        .get_content()
+                        .path(&item.path)
+                        .r#ref("main")
+                        .send()
+                        .await
+                    {
+                        Ok(content) => content.items[0].decoded_content(),
+                        Err(error) => {
+                            panic!("Error {:?}", error);
+                        }
+                    };
+                    let existing_content = match decoded_content {
+                        Some(content) => content,
+                        None => panic!("Can't decode file {}", item.name),
+                    };
+                    let new_content = (analysis.file_content_update_fn)(existing_content, version);
                     return Some((analysis, new_content, item.sha.clone()));
                 }
             }
@@ -100,7 +132,7 @@ pub mod github {
             .body(body)
             .send()
             .await?;
-
+        println!("PR created for repo {}", repo);
         return Ok((pr_result.number, pr_result.head.sha));
     }
 
@@ -121,7 +153,7 @@ pub mod github {
             .branch(branch)
             .send()
             .await?;
-
+        println!("Version file {} updated for repo {}", path, repo);
         return Ok(());
     }
 
@@ -138,6 +170,7 @@ pub mod github {
             .merge(pr_number)
             .send()
             .await?;
+        println!("Merged PR {} for repo {}", pr_number, repo);
         return Ok(res.sha.unwrap());
     }
 
@@ -166,6 +199,7 @@ pub mod github {
             .generate_release_notes(&version)
             .send()
             .await?;
+        println!("Release {} created for repo {}", version, repo);
         return Ok(());
     }
 
@@ -185,6 +219,7 @@ pub mod github {
                 sha,
             )
             .await?;
+        println!("Version branch {} created for repo {}", version, repo);
         return Ok(());
     }
 
@@ -196,22 +231,20 @@ pub mod github {
     ) -> Result<(), Error> {
         let files = get_root_file_list(&octocrab, &json_repo.owner, &json_repo.repo).await?;
         let version_s = version.read().await.to_string();
-        let file_to_update = match get_repo_with_file_to_update(&files, &version_s) {
+        let file_to_update = match get_repo_with_file_to_update(
+            &octocrab,
+            &json_repo.owner,
+            &json_repo.repo,
+            &files,
+            &version_s,
+        )
+        .await
+        {
             Some(analysis) => analysis,
             None => {
                 panic!("No versionning file found");
             }
         };
-        let pr_resullt = create_pr(
-            &octocrab,
-            &json_repo.owner,
-            &json_repo.repo,
-            &config.read().await.pattern.title,
-            &json_repo.origin,
-            &json_repo.target,
-            &config.read().await.pattern.body,
-        )
-        .await?;
         update_file_version(
             &octocrab,
             &json_repo.owner,
@@ -222,6 +255,17 @@ pub mod github {
             &json_repo.origin,
         )
         .await?;
+        let pr_resullt = create_pr(
+            &octocrab,
+            &json_repo.owner,
+            &json_repo.repo,
+            &config.read().await.pattern.title,
+            &json_repo.origin,
+            &json_repo.target,
+            &config.read().await.pattern.body,
+        )
+        .await?;
+
         let merge_result =
             merge_branch(&octocrab, &json_repo.owner, &json_repo.repo, pr_resullt.0).await?;
         create_release(

@@ -1,5 +1,4 @@
 *.json
-
-# Added by cargo
-
+!package.json
+!deno.json
 /target
