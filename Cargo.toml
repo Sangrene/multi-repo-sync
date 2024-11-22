@@ -1,6 +1,6 @@
 [package]
 name = "multi-repo-sync"
-version = "0.1.0"
+version = "v1.1.4"
 edition = "2021"
 
 [dependencies]
