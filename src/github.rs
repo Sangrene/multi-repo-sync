@@ -1,5 +1,6 @@
 pub mod github {
 
+    use core::panic;
     use std::sync::Arc;
 
     use regex::Regex;
@@ -62,6 +63,7 @@ pub mod github {
         octocrab: &Arc<RwLock<Octocrab>>,
         owner: &String,
         repo: &String,
+        origin: &String,
         files: &Vec<octocrab::models::repos::Content>,
         version: &'a String,
     ) -> Option<(RepoAnalysis<'a>, String, String)> {
@@ -74,13 +76,13 @@ pub mod github {
                         .repos(owner, repo)
                         .get_content()
                         .path(&item.path)
-                        .r#ref("main")
+                        .r#ref(origin)
                         .send()
                         .await
                     {
                         Ok(content) => content.items[0].decoded_content(),
                         Err(error) => {
-                            panic!("Error {:?}", error);
+                            panic!("Error getting content of {} {:?}",repo, error);
                         }
                     };
                     let existing_content = match decoded_content {
@@ -235,6 +237,7 @@ pub mod github {
             &octocrab,
             &json_repo.owner,
             &json_repo.repo,
+            &json_repo.origin,
             &files,
             &version_s,
         )
