@@ -44,12 +44,13 @@ pub mod github {
             file_to_detect: "pyproject.toml",
             language: RepoType::Python,
             file_content_update_fn: |content, version| {
-                let re = Regex::new(r"version\s=.+\n").unwrap();
+                let re = Regex::new(r"\nversion\s=.+\n").unwrap();
                 return re
                     .replace(
                         &content,
                         format!(
-                            r#"version = "{}"
+                            r#"
+version = "{}"
 "#,
                             version
                         ),
@@ -106,12 +107,14 @@ pub mod github {
         octocrab: &Arc<RwLock<Octocrab>>,
         owner: &String,
         repo: &String,
+        origin: &String,
     ) -> Result<Vec<octocrab::models::repos::Content>, Error> {
         let content = octocrab
             .read()
             .await
             .repos(owner, repo)
             .get_content()
+            .r#ref(origin)
             .send()
             .await?;
         return Ok(content.items);
@@ -231,7 +234,7 @@ pub mod github {
         config: Arc<RwLock<Config>>,
         version: Arc<RwLock<String>>,
     ) -> Result<(), Error> {
-        let files = get_root_file_list(&octocrab, &json_repo.owner, &json_repo.repo).await?;
+        let files = get_root_file_list(&octocrab, &json_repo.owner, &json_repo.repo, &json_repo.origin).await?;
         let version_s = version.read().await.to_string();
         let file_to_update = match get_repo_with_file_to_update(
             &octocrab,
