@@ -1,7 +1,7 @@
 pub mod github {
 
     use core::panic;
-    use std::sync::Arc;
+    use std::{io, sync::Arc};
 
     use regex::Regex;
     use tokio::{sync::RwLock, task::JoinSet};
@@ -83,7 +83,7 @@ version = "{}"
                     {
                         Ok(content) => content.items[0].decoded_content(),
                         Err(error) => {
-                            panic!("Error getting content of {} {:?}",repo, error);
+                            panic!("Error getting content of {} {:?}", repo, error);
                         }
                     };
                     let existing_content = match decoded_content {
@@ -234,7 +234,13 @@ version = "{}"
         config: Arc<RwLock<Config>>,
         version: Arc<RwLock<String>>,
     ) -> Result<(), Error> {
-        let files = get_root_file_list(&octocrab, &json_repo.owner, &json_repo.repo, &json_repo.origin).await?;
+        let files = get_root_file_list(
+            &octocrab,
+            &json_repo.owner,
+            &json_repo.repo,
+            &json_repo.origin,
+        )
+        .await?;
         let version_s = version.read().await.to_string();
         let file_to_update = match get_repo_with_file_to_update(
             &octocrab,
@@ -304,10 +310,13 @@ version = "{}"
         config: Config,
         version: String,
     ) -> Result<(), Error> {
-        println!(
-            "Authenticated as {}",
-            octocrab.current().user().await.unwrap().url
-        );
+        if octocrab.current().user().await.is_err() {
+            return Err(Error::Other {
+                source: Box::new(io::Error::new(io::ErrorKind::Other, "Authentication failed")),
+                backtrace: std::backtrace::Backtrace::capture(),
+            });
+        }
+
         let mut set = JoinSet::new();
         let octocrab_arc = Arc::new(RwLock::new(octocrab));
         let config_arc = Arc::new(RwLock::new(config));
