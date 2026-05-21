@@ -2,6 +2,10 @@
 This CLI tool is used to manage pull requests creation, merges and releases hapening across multiple repositories.
 
 ## Usage
+<<<<<<< HEAD
+=======
+
+>>>>>>> 084182a7ac490b55daebac59e1762e22b5a61e11
 Create the JSON configuration file, matching this example :
 ```json
 {
@@ -22,9 +26,7 @@ Create the JSON configuration file, matching this example :
 ```
 The `pattern` describes the PR title and body. 
 
-Run the script.
-In debug 
-```cargo run --config=trueconfig.json --tag=v1.23.2```
+Run the binary. `--help` if needed.
 
 ie
-```.multi-repo-sync --config=config.json --tag=v1.23.2```
+```.multi-repo-sync --config=config.json --release=v1.23.2```
