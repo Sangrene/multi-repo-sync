@@ -25,4 +25,4 @@ The `pattern` describes the PR title and body.
 Run the binary. `--help` if needed.
 
 ie
-```.multi-repo-sync --config=config.json --release=v1.23.2```
+```.multi-repo-sync --config=config.json --tag=v1.23.2```
