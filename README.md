@@ -2,10 +2,6 @@
 This CLI tool is used to manage pull requests creation, merges and releases hapening across multiple repositories.
 
 ## Usage
-<<<<<<< HEAD
-=======
-
->>>>>>> 084182a7ac490b55daebac59e1762e22b5a61e11
 Create the JSON configuration file, matching this example :
 ```json
 {
